@@ -7,17 +7,20 @@ const StockAnalyzer = () => {
   const [stockData, setStockData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
   const fetchStockData = async () => {
     if (!ticker.trim()) {
-      setError('Please enter a stock ticker');
+      setError('Please enter a stock ticker or company name');
       return;
     }
 
     setLoading(true);
     setError('');
+    setShowSuggestions(false);
 
     try {
       const response = await fetch(`${API_URL}/stock/${ticker}`);
@@ -29,7 +32,73 @@ const StockAnalyzer = () => {
       const data = await response.json();
       setStockData(data);
     } catch (err) {
-      setError(`Failed to fetch data: ${err.message}. Make sure the backend is running.`);
+      setError(`Failed to fetch data: ${err.message}. Try a different ticker or company name.`);
+      setStockData(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchSuggestions = async (query) => {
+    if (query.length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/search/${query}`);
+      const data = await response.json();
+      setSuggestions(data.suggestions || []);
+      setShowSuggestions(data.suggestions && data.suggestions.length > 0);
+    } catch (err) {
+      console.error('Error fetching suggestions:', err);
+      setSuggestions([]);
+    }
+  };
+
+  const handleSearchInput = (value) => {
+    setTicker(value);
+    
+    // Fetch suggestions with debounce
+    if (value.length >= 2) {
+      setTimeout(() => {
+        fetchSuggestions(value);
+      }, 300);
+    } else {
+      setSuggestions([]);
+      setShowSuggestions(false);
+    }
+  };
+
+  const handleSuggestionClick = (suggestion) => {
+    setTicker(suggestion.ticker);
+    setSuggestions([]);
+    setShowSuggestions(false);
+    
+    // Auto-fetch data after selecting suggestion
+    setTimeout(() => {
+      const tempTicker = suggestion.ticker;
+      setTicker(tempTicker);
+      fetchStockDataWithTicker(tempTicker);
+    }, 100);
+  };
+
+  const fetchStockDataWithTicker = async (tickerValue) => {
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch(`${API_URL}/stock/${tickerValue}`);
+      
+      if (!response.ok) {
+        throw new Error('Stock data not found');
+      }
+
+      const data = await response.json();
+      setStockData(data);
+    } catch (err) {
+      setError(`Failed to fetch data: ${err.message}`);
       setStockData(null);
     } finally {
       setLoading(false);
@@ -40,6 +109,12 @@ const StockAnalyzer = () => {
     if (e.key === 'Enter') {
       fetchStockData();
     }
+  };
+
+  const handleQuickSearch = (tickerValue) => {
+    setTicker(tickerValue);
+    setShowSuggestions(false);
+    setTimeout(() => fetchStockDataWithTicker(tickerValue), 100);
   };
 
   const getSignalColor = (signal) => {
@@ -95,12 +170,39 @@ const StockAnalyzer = () => {
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
               <input
                 type="text"
-                placeholder="Enter stock ticker (e.g., AAPL, TSLA, MSFT, NVDA)"
+                placeholder="Enter stock ticker or company name (e.g., AAPL or Apple)"
                 value={ticker}
-                onChange={(e) => setTicker(e.target.value.toUpperCase())}
+                onChange={(e) => handleSearchInput(e.target.value)}
                 onKeyPress={handleKeyPress}
+                onFocus={() => {
+                  if (suggestions.length > 0) setShowSuggestions(true);
+                }}
+                onBlur={() => {
+                  setTimeout(() => setShowSuggestions(false), 200);
+                }}
                 className="w-full pl-12 pr-4 py-3 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+              
+              {/* Suggestions Dropdown */}
+              {showSuggestions && suggestions.length > 0 && (
+                <div className="absolute z-10 w-full mt-2 bg-slate-700 rounded-lg shadow-xl border border-slate-600 max-h-64 overflow-y-auto">
+                  {suggestions.map((suggestion, index) => (
+                    <div
+                      key={index}
+                      onClick={() => handleSuggestionClick(suggestion)}
+                      className="px-4 py-3 hover:bg-slate-600 cursor-pointer border-b border-slate-600 last:border-b-0 transition-colors"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-blue-400 font-semibold">{suggestion.ticker}</span>
+                          <span className="text-slate-300 ml-2">- {suggestion.name}</span>
+                        </div>
+                        <Search className="text-slate-500" size={16} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <button
               onClick={fetchStockData}
@@ -110,12 +212,29 @@ const StockAnalyzer = () => {
               {loading ? 'Analyzing...' : 'Analyze'}
             </button>
           </div>
+          
           {error && (
             <div className="mt-4 p-4 bg-red-500/10 border border-red-500 rounded-lg flex items-start gap-2">
               <AlertCircle className="text-red-400 flex-shrink-0 mt-0.5" size={20} />
               <p className="text-red-400">{error}</p>
             </div>
           )}
+          
+          {/* Popular Searches */}
+          <div className="mt-4">
+            <p className="text-slate-400 text-sm mb-2">💡 Popular searches:</p>
+            <div className="flex flex-wrap gap-2">
+              {['AAPL', 'TSLA', 'MSFT', 'GOOGL', 'NVDA', 'AMZN', 'META', 'NFLX'].map(t => (
+                <button
+                  key={t}
+                  onClick={() => handleQuickSearch(t)}
+                  className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-sm transition-colors"
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Stock Data Display */}
@@ -125,6 +244,11 @@ const StockAnalyzer = () => {
             <div className="bg-slate-800 rounded-xl p-4 shadow-lg">
               <h2 className="text-2xl font-bold text-white">{stockData.current.companyName}</h2>
               <p className="text-slate-400">{stockData.current.symbol}</p>
+              {stockData.searchedFor && stockData.searchedFor !== stockData.actualTicker && (
+                <p className="text-sm text-blue-400 mt-1">
+                  Searched for: "{stockData.searchedFor}" → Found: {stockData.actualTicker}
+                </p>
+              )}
             </div>
 
             {/* Stock Info Cards */}
@@ -332,19 +456,13 @@ const StockAnalyzer = () => {
           <div className="bg-slate-800 rounded-xl p-12 text-center shadow-lg">
             <TrendingUp className="mx-auto text-slate-600 mb-4" size={64} />
             <h3 className="text-2xl font-bold text-white mb-2">Start Analyzing Stocks with AI</h3>
-            <p className="text-slate-400 mb-4">Enter a stock ticker to view real-time data, technical indicators, and ML price predictions</p>
+            <p className="text-slate-400 mb-4">Enter a stock ticker OR company name to view real-time data, technical indicators, and ML price predictions</p>
             <div className="bg-slate-700 rounded-lg p-4 mt-4 max-w-md mx-auto">
-              <p className="text-sm text-slate-300 mb-2">💡 Popular tickers to try:</p>
-              <div className="flex flex-wrap gap-2 justify-center">
-                {['AAPL', 'TSLA', 'MSFT', 'GOOGL', 'NVDA', 'AMZN'].map(t => (
-                  <button
-                    key={t}
-                    onClick={() => { setTicker(t); }}
-                    className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm transition-colors"
-                  >
-                    {t}
-                  </button>
-                ))}
+              <p className="text-sm text-slate-300 mb-2">✨ Try searching for:</p>
+              <div className="text-left space-y-1 text-sm text-slate-400">
+                <p>• Ticker: <span className="text-blue-400">AAPL</span> or Company: <span className="text-blue-400">Apple</span></p>
+                <p>• Ticker: <span className="text-blue-400">TSLA</span> or Company: <span className="text-blue-400">Tesla</span></p>
+                <p>• Ticker: <span className="text-blue-400">MSFT</span> or Company: <span className="text-blue-400">Microsoft</span></p>
               </div>
             </div>
           </div>

@@ -12,9 +12,10 @@ from datetime import datetime, timedelta
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import r2_score
-from typing import Optional, Dict, List, Any, Union, Tuple
 import warnings
 import os
+from stock_utils import find_ticker, search_companies
+from symbols import POPULAR_STOCKS
 
 warnings.filterwarnings('ignore')
 
@@ -27,7 +28,7 @@ CORS(app, resources={
     }
 })
 
-def safe_round(value: Any, decimals: int = 2) -> Optional[float]:
+def safe_round(value, decimals=2):
     """Safely round a value, handling None and NaN"""
     if value is None:
         return None
@@ -37,7 +38,7 @@ def safe_round(value: Any, decimals: int = 2) -> Optional[float]:
         return round(float(value), decimals)
     return None
 
-def safe_float(value: Any, default: float = 0.0) -> float:
+def safe_float(value, default=0.0):
     """Safely convert to float"""
     if value is None:
         return default
@@ -49,7 +50,7 @@ def safe_float(value: Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
 
-def safe_int(value: Any, default: int = 0) -> int:
+def safe_int(value, default=0):
     """Safely convert to int"""
     if value is None:
         return default
@@ -62,42 +63,42 @@ def safe_int(value: Any, default: int = 0) -> int:
 class StockAnalyzer:
     """Main class for stock analysis and predictions"""
     
-    def __init__(self, ticker: str) -> None:
-        self.ticker: str = str(ticker).upper()
+    def __init__(self, ticker):
+        self.ticker = str(ticker).upper()
         self.stock = yf.Ticker(self.ticker)
         
-    def get_current_data(self) -> Optional[Dict[str, Any]]:
+    def get_current_data(self):
         """Get current stock information"""
         try:
-            info: Dict[str, Any] = self.stock.info
+            info = self.stock.info
             
             # Get current price
-            current_price: Optional[float] = info.get('currentPrice')
+            current_price = info.get('currentPrice')
             if current_price is None:
                 current_price = info.get('regularMarketPrice')
             if current_price is None:
                 current_price = info.get('previousClose')
             
-            current_price_float: float = safe_float(current_price, 0)
+            current_price = safe_float(current_price, 0)
             
             # Get previous close
-            previous_close: float = safe_float(info.get('previousClose'), 0)
+            previous_close = safe_float(info.get('previousClose'), 0)
             
-            if current_price_float == 0 or previous_close == 0:
+            if current_price == 0 or previous_close == 0:
                 return None
             
             # Calculate change
-            change: float = current_price_float - previous_close
-            change_percent: float = (change / previous_close) * 100 if previous_close != 0 else 0
+            change = current_price - previous_close
+            change_percent = (change / previous_close) * 100 if previous_close != 0 else 0
             
             # Get other data
-            high_52week: float = safe_float(info.get('fiftyTwoWeekHigh'), current_price_float)
-            low_52week: float = safe_float(info.get('fiftyTwoWeekLow'), current_price_float)
-            volume: int = safe_int(info.get('volume'), 0)
-            market_cap: int = safe_int(info.get('marketCap'), 0)
+            high_52week = safe_float(info.get('fiftyTwoWeekHigh'), current_price)
+            low_52week = safe_float(info.get('fiftyTwoWeekLow'), current_price)
+            volume = safe_int(info.get('volume'), 0)
+            market_cap = safe_int(info.get('marketCap'), 0)
             
             # Get company name
-            company_name: Optional[str] = info.get('longName')
+            company_name = info.get('longName')
             if not company_name:
                 company_name = info.get('shortName')
             if not company_name:
@@ -105,7 +106,7 @@ class StockAnalyzer:
             
             return {
                 'symbol': self.ticker,
-                'currentPrice': safe_round(current_price_float, 2),
+                'currentPrice': safe_round(current_price, 2),
                 'previousClose': safe_round(previous_close, 2),
                 'change': safe_round(change, 2),
                 'changePercent': safe_round(change_percent, 2),
@@ -119,10 +120,10 @@ class StockAnalyzer:
             print(f"Error fetching current data for {self.ticker}: {str(e)}")
             return None
     
-    def get_historical_data(self, period: str = '3mo') -> List[Dict[str, Any]]:
+    def get_historical_data(self, period='3mo'):
         """Get historical price data with technical indicators"""
         try:
-            df: pd.DataFrame = self.stock.history(period=period)
+            df = self.stock.history(period=period)
             
             if df.empty:
                 print(f"No historical data found for {self.ticker}")
@@ -137,25 +138,18 @@ class StockAnalyzer:
             
             # Calculate technical indicators
             df['RSI'] = self.calculate_rsi(df['Close'])
-            macd_result: Tuple[pd.Series, pd.Series] = self.calculate_macd(df['Close'])
+            macd_result = self.calculate_macd(df['Close'])
             df['MACD'] = macd_result[0]
             df['Signal'] = macd_result[1]
             
             # Format data for frontend
-            historical_data: List[Dict[str, Any]] = []
-            
+            historical_data = []
             for index, row in df.iterrows():
-                # Handle date formatting - convert to pandas Timestamp
-                try:
-                    date_value = row['Date']
-                    if isinstance(date_value, pd.Timestamp):
-                        date_str: str = date_value.strftime('%Y-%m-%d')
-                    else:
-                        # Convert to Timestamp if it's not already
-                        date_ts = pd.Timestamp(date_value)
-                        date_str = date_ts.strftime('%Y-%m-%d')
-                except (TypeError, ValueError, AttributeError):
-                    date_str = str(row['Date'])[:10]
+                date_obj = row['Date']
+                if hasattr(date_obj, 'strftime'):
+                    date_str = date_obj.strftime('%Y-%m-%d')
+                else:
+                    date_str = str(date_obj)[:10]
                 
                 historical_data.append({
                     'date': date_str,
@@ -177,41 +171,41 @@ class StockAnalyzer:
             print(f"Error fetching historical data for {self.ticker}: {str(e)}")
             return []
     
-    def calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
+    def calculate_rsi(self, prices, period=14):
         """Calculate Relative Strength Index"""
         try:
-            delta: pd.Series = prices.diff()
-            gain: pd.Series = delta.where(delta > 0, 0).rolling(window=period).mean()
-            loss: pd.Series = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+            delta = prices.diff()
+            gain = delta.where(delta > 0, 0).rolling(window=period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
             
             # Avoid division by zero
-            loss_safe: pd.Series = loss.replace(0, np.nan)
-            rs: pd.Series = gain / loss_safe
-            rsi: pd.Series = 100 - (100 / (1 + rs))
+            loss_safe = loss.replace(0, np.nan)
+            rs = gain / loss_safe
+            rsi = 100 - (100 / (1 + rs))
             
             return rsi
         except Exception as e:
             print(f"Error calculating RSI: {str(e)}")
             return pd.Series([np.nan] * len(prices))
     
-    def calculate_macd(self, prices: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[pd.Series, pd.Series]:
+    def calculate_macd(self, prices, fast=12, slow=26, signal=9):
         """Calculate MACD"""
         try:
-            exp1: pd.Series = prices.ewm(span=fast, adjust=False).mean()
-            exp2: pd.Series = prices.ewm(span=slow, adjust=False).mean()
-            macd: pd.Series = exp1 - exp2
-            signal_line: pd.Series = macd.ewm(span=signal, adjust=False).mean()
+            exp1 = prices.ewm(span=fast, adjust=False).mean()
+            exp2 = prices.ewm(span=slow, adjust=False).mean()
+            macd = exp1 - exp2
+            signal_line = macd.ewm(span=signal, adjust=False).mean()
             return macd, signal_line
         except Exception as e:
             print(f"Error calculating MACD: {str(e)}")
-            empty_series: pd.Series = pd.Series([np.nan] * len(prices))
+            empty_series = pd.Series([np.nan] * len(prices))
             return empty_series, empty_series
     
-    def predict_prices(self, days: int = 7) -> Optional[Dict[str, Any]]:
+    def predict_prices(self, days=7):
         """Predict future stock prices using Linear Regression"""
         try:
             # Get 6 months of historical data
-            df: pd.DataFrame = self.stock.history(period='6mo')
+            df = self.stock.history(period='6mo')
             
             if len(df) < 30:
                 print(f"Insufficient data for predictions: {len(df)} days")
@@ -228,8 +222,8 @@ class StockAnalyzer:
                 return None
             
             # Features and target
-            X: np.ndarray = df[['Days', 'Volume', 'MA5']].values
-            y: np.ndarray = df['Close'].values
+            X = df[['Days', 'Volume', 'MA5']].values
+            y = df['Close'].values
             
             # Check for invalid values
             if np.any(np.isnan(X)) or np.any(np.isnan(y)):
@@ -240,42 +234,42 @@ class StockAnalyzer:
             scaler_X = MinMaxScaler()
             scaler_y = MinMaxScaler()
             
-            X_scaled: np.ndarray = scaler_X.fit_transform(X)
-            y_scaled: np.ndarray = scaler_y.fit_transform(y.reshape(-1, 1))
+            X_scaled = scaler_X.fit_transform(X)
+            y_scaled = scaler_y.fit_transform(y.reshape(-1, 1))
             
             # Train model
             model = LinearRegression()
             model.fit(X_scaled, y_scaled)
             
             # Make predictions
-            last_day: int = len(df)
-            last_volume: float = safe_float(df['Volume'].iloc[-1], df['Volume'].mean())
-            last_ma5: float = safe_float(df['MA5'].iloc[-1], df['Close'].iloc[-1])
+            last_day = len(df)
+            last_volume = safe_float(df['Volume'].iloc[-1], df['Volume'].mean())
+            last_ma5 = safe_float(df['MA5'].iloc[-1], df['Close'].iloc[-1])
             
-            predictions: List[Dict[str, Any]] = []
-            current_ma5: float = last_ma5
+            predictions = []
+            current_ma5 = last_ma5
             
             for i in range(1, days + 1):
-                future_day: int = last_day + i
-                future_features: np.ndarray = np.array([[future_day, last_volume, current_ma5]])
-                future_features_scaled: np.ndarray = scaler_X.transform(future_features)
+                future_day = last_day + i
+                future_features = np.array([[future_day, last_volume, current_ma5]])
+                future_features_scaled = scaler_X.transform(future_features)
                 
-                pred_scaled: np.ndarray = model.predict(future_features_scaled)
-                pred_price: float = safe_float(scaler_y.inverse_transform(pred_scaled)[0][0])
+                pred_scaled = model.predict(future_features_scaled)
+                pred_price = safe_float(scaler_y.inverse_transform(pred_scaled)[0][0])
                 
                 # Update moving average for next prediction
                 current_ma5 = (current_ma5 * 4 + pred_price) / 5
                 
-                pred_date: datetime = datetime.now() + timedelta(days=i)
+                pred_date = datetime.now() + timedelta(days=i)
                 predictions.append({
                     'date': pred_date.strftime('%Y-%m-%d'),
                     'predictedPrice': safe_round(pred_price, 2)
                 })
             
             # Calculate model confidence
-            y_pred: np.ndarray = model.predict(X_scaled)
-            confidence: float = r2_score(y_scaled, y_pred)
-            confidence_pct: float = max(0, min(100, confidence * 100))
+            y_pred = model.predict(X_scaled)
+            confidence = r2_score(y_scaled, y_pred)
+            confidence_pct = max(0, min(100, confidence * 100))
             
             return {
                 'predictions': predictions,
@@ -287,10 +281,10 @@ class StockAnalyzer:
             print(f"Error making predictions for {self.ticker}: {str(e)}")
             return None
     
-    def get_sentiment_signal(self) -> Dict[str, Any]:
+    def get_sentiment_signal(self):
         """Generate trading signal based on technical indicators"""
         try:
-            df: pd.DataFrame = self.stock.history(period='1mo')
+            df = self.stock.history(period='1mo')
             
             if len(df) < 20:
                 return {
@@ -300,14 +294,14 @@ class StockAnalyzer:
                     'price_vs_ma20': None
                 }
             
-            current_price: float = safe_float(df['Close'].iloc[-1])
-            ma20: float = safe_float(df['Close'].rolling(window=20).mean().iloc[-1])
+            current_price = safe_float(df['Close'].iloc[-1])
+            ma20 = safe_float(df['Close'].rolling(window=20).mean().iloc[-1])
             
-            rsi_series: pd.Series = self.calculate_rsi(df['Close'])
+            rsi_series = self.calculate_rsi(df['Close'])
             rsi_value = rsi_series.iloc[-1]
-            rsi: float = safe_float(rsi_value, 50)
+            rsi = safe_float(rsi_value, 50)
             
-            signal_score: int = 0
+            signal_score = 0
             
             # Price vs MA20 signal
             if current_price > ma20:
@@ -322,9 +316,6 @@ class StockAnalyzer:
                 signal_score -= 2
             
             # Determine final signal
-            signal: str
-            strength: float
-            
             if signal_score >= 2:
                 signal = 'STRONG BUY'
                 strength = min(100, (signal_score / 3) * 100)
@@ -341,7 +332,7 @@ class StockAnalyzer:
                 signal = 'HOLD'
                 strength = 50
             
-            price_vs_ma20: float = ((current_price - ma20) / ma20) * 100 if ma20 != 0 else 0
+            price_vs_ma20 = ((current_price - ma20) / ma20) * 100 if ma20 != 0 else 0
             
             return {
                 'signal': signal,
@@ -361,17 +352,35 @@ class StockAnalyzer:
 
 
 # API Routes
+@app.route('/api/search/<query>', methods=['GET'])
+def search_stocks(query: str):
+    """Search for stocks by name or ticker"""
+    try:
+        suggestions = search_companies(query, limit=10)
+        return jsonify({'suggestions': suggestions})
+        
+    except Exception as e:
+        print(f"Error in search_stocks: {str(e)}")
+        return jsonify({'suggestions': []})
+
 
 @app.route('/api/stock/<ticker>', methods=['GET'])
-def get_stock_data(ticker: str):
+def get_stock_data(ticker):
     """Get complete stock analysis"""
     try:
-        analyzer = StockAnalyzer(ticker)
+        # Convert company name to ticker if needed
+        actual_ticker = find_ticker(ticker)
+        
+        print(f"📊 Searching for: '{ticker}' → Resolved to: '{actual_ticker}'")
+        
+        analyzer = StockAnalyzer(actual_ticker)
         
         current_data = analyzer.get_current_data()
         if not current_data:
             return jsonify({
-                'error': f'Invalid ticker or data unavailable for {ticker}'
+                'error': f'Invalid ticker or data unavailable for {ticker}',
+                'searchedFor': ticker,
+                'resolvedTo': actual_ticker
             }), 404
         
         historical_data = analyzer.get_historical_data(period='3mo')
@@ -383,7 +392,9 @@ def get_stock_data(ticker: str):
             'historical': historical_data,
             'predictions': predictions,
             'sentiment': sentiment,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'searchedFor': ticker,
+            'actualTicker': actual_ticker
         })
         
     except Exception as e:
@@ -401,7 +412,9 @@ def predict_stock(ticker: str, days: int):
         if days < 1:
             return jsonify({'error': 'Minimum prediction period is 1 day'}), 400
         
-        analyzer = StockAnalyzer(ticker)
+        # Convert company name to ticker if needed
+        actual_ticker = find_ticker(ticker)
+        analyzer = StockAnalyzer(actual_ticker)
         predictions = analyzer.predict_prices(days=days)
         
         if not predictions:
@@ -420,7 +433,8 @@ def health_check():
     return jsonify({
         'status': 'healthy',
         'service': 'Stock Analyzer API',
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
+        'stocksAvailable': list(POPULAR_STOCKS.values())
     })
 
 
@@ -429,18 +443,27 @@ def root():
     """Root endpoint"""
     return jsonify({
         'message': 'Stock Analyzer API',
-        'version': '1.0.0',
+        'version': '2.0.0',
+        'features': [
+            'Search by company name or ticker',
+            'Real-time stock data',
+            'ML price predictions',
+            'Technical analysis (RSI, MACD, MA)',
+            'Trading signals'
+        ],
         'endpoints': {
-            '/api/stock/<ticker>': 'Get full stock analysis',
+            '/api/stock/<ticker>': 'Get full stock analysis (accepts name or ticker)',
+            '/api/search/<query>': 'Search for stocks',
             '/api/predict/<ticker>/<days>': 'Get price predictions',
             '/health': 'Health check'
-        }
+        },
+        'stocksAvailable': len(set(POPULAR_STOCKS.values()))
     })
 
 
 if __name__ == '__main__':
-    port: int = int(os.getenv('PORT', 5000))
-    debug_mode: bool = os.getenv('FLASK_ENV', 'production') == 'development'
+    port = int(os.getenv('PORT', 5000))
+    debug_mode = os.getenv('FLASK_ENV', 'production') == 'development'
     
     print("=" * 50)
     print("🚀 Stock Analyzer API Starting...")
@@ -448,6 +471,7 @@ if __name__ == '__main__':
     print(f"📊 Mode: {'Development' if debug_mode else 'Production'}")
     print(f"🌐 Server: http://localhost:{port}")
     print(f"💡 Try: http://localhost:{port}/api/stock/AAPL")
+    print(f"📈 Stocks available: {len(set(POPULAR_STOCKS.values()))}")
     print("=" * 50)
     
     app.run(host='0.0.0.0', port=port, debug=debug_mode)
