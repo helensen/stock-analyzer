@@ -1,6 +1,6 @@
 """
 Stock Analyzer with Real-Time Data & ML Predictions
-Author: Your Name
+Author: Abel Muanda
 """
 
 from flask import Flask, jsonify, request
