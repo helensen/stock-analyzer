@@ -12,10 +12,12 @@ from datetime import datetime, timedelta
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import r2_score
+from typing import Optional, Dict, List, Any
 import warnings
 import os
 from stock_utils import find_ticker, search_companies
 from symbols import POPULAR_STOCKS
+from lstm_predictor import predict_with_lstm, TENSORFLOW_AVAILABLE
 
 warnings.filterwarnings('ignore')
 
@@ -201,16 +203,65 @@ class StockAnalyzer:
             empty_series = pd.Series([np.nan] * len(prices))
             return empty_series, empty_series
     
-    def predict_prices(self, days=7):
-        """Predict future stock prices using Linear Regression"""
+    def predict_prices(self, days=7, model='linear'):
+        """
+        Predict future stock prices
+        
+        Args:
+            days: Number of days to predict (1-30)
+            model: 'linear' (fast) or 'lstm' (slow but accurate)
+            
+        Returns:
+            Dictionary with predictions, confidence, and model type
+        """
         try:
-            # Get 6 months of historical data
-            df = self.stock.history(period='6mo')
+            # Determine which period to use based on model
+            period = '1y' if model == 'lstm' else '6mo'
+            df = self.stock.history(period=period)
             
             if len(df) < 30:
                 print(f"Insufficient data for predictions: {len(df)} days")
                 return None
             
+            # Use LSTM if requested and available
+            if model == 'lstm':
+                if not TENSORFLOW_AVAILABLE:
+                    print("⚠️ TensorFlow not available, using Linear Regression")
+                    return self._predict_with_linear_regression(df, days)
+                
+                if len(df) < 100:
+                    print(f"⚠️ Insufficient data for LSTM ({len(df)} days), need 100+. Using Linear Regression")
+                    return self._predict_with_linear_regression(df, days)
+                
+                print(f"🤖 Using LSTM Neural Network for {self.ticker}")
+                lstm_result = predict_with_lstm(df, days=days, epochs=30)
+                
+                if lstm_result:
+                    return lstm_result
+                else:
+                    print("⚠️ LSTM failed, falling back to Linear Regression")
+                    return self._predict_with_linear_regression(df, days)
+            
+            # Default: Use Linear Regression (fast)
+            print(f"⚡ Using Linear Regression for {self.ticker}")
+            return self._predict_with_linear_regression(df, days)
+            
+        except Exception as e:
+            print(f"Error making predictions for {self.ticker}: {str(e)}")
+            return None
+    
+    def _predict_with_linear_regression(self, df, days=7):
+        """
+        Linear Regression prediction (fallback method)
+        
+        Args:
+            df: DataFrame with historical data
+            days: Number of days to predict
+            
+        Returns:
+            Dictionary with predictions
+        """
+        try:
             # Prepare data
             df = df.reset_index()
             df['Days'] = np.arange(len(df))
@@ -218,7 +269,6 @@ class StockAnalyzer:
             df = df.dropna()
             
             if len(df) < 20:
-                print("Insufficient data after cleaning")
                 return None
             
             # Features and target
@@ -227,7 +277,6 @@ class StockAnalyzer:
             
             # Check for invalid values
             if np.any(np.isnan(X)) or np.any(np.isnan(y)):
-                print("NaN values found in data")
                 return None
             
             # Normalize features
@@ -278,7 +327,7 @@ class StockAnalyzer:
             }
             
         except Exception as e:
-            print(f"Error making predictions for {self.ticker}: {str(e)}")
+            print(f"Error in Linear Regression: {str(e)}")
             return None
     
     def get_sentiment_signal(self):
@@ -353,7 +402,7 @@ class StockAnalyzer:
 
 # API Routes
 @app.route('/api/search/<query>', methods=['GET'])
-def search_stocks(query: str):
+def search_stocks(query):
     """Search for stocks by name or ticker"""
     try:
         suggestions = search_companies(query, limit=10)
@@ -368,10 +417,14 @@ def search_stocks(query: str):
 def get_stock_data(ticker):
     """Get complete stock analysis"""
     try:
+        # Get model choice from query parameter (default: linear)
+        model_choice = request.args.get('model', 'linear').lower()
+        
         # Convert company name to ticker if needed
         actual_ticker = find_ticker(ticker)
         
         print(f"📊 Searching for: '{ticker}' → Resolved to: '{actual_ticker}'")
+        print(f"🤖 Model requested: {model_choice}")
         
         analyzer = StockAnalyzer(actual_ticker)
         
@@ -384,7 +437,9 @@ def get_stock_data(ticker):
             }), 404
         
         historical_data = analyzer.get_historical_data(period='3mo')
-        predictions = analyzer.predict_prices(days=7)
+        
+        # Pass model choice to predictions
+        predictions = analyzer.predict_prices(days=7, model=model_choice)
         sentiment = analyzer.get_sentiment_signal()
         
         return jsonify({
@@ -394,7 +449,8 @@ def get_stock_data(ticker):
             'sentiment': sentiment,
             'timestamp': datetime.now().isoformat(),
             'searchedFor': ticker,
-            'actualTicker': actual_ticker
+            'actualTicker': actual_ticker,
+            'modelUsed': model_choice
         })
         
     except Exception as e:
@@ -403,7 +459,7 @@ def get_stock_data(ticker):
 
 
 @app.route('/api/predict/<ticker>/<int:days>', methods=['GET'])
-def predict_stock(ticker: str, days: int):
+def predict_stock(ticker, days):
     """Get price predictions"""
     try:
         if days > 30:
@@ -412,10 +468,13 @@ def predict_stock(ticker: str, days: int):
         if days < 1:
             return jsonify({'error': 'Minimum prediction period is 1 day'}), 400
         
+        # Get model choice
+        model_choice = request.args.get('model', 'linear').lower()
+        
         # Convert company name to ticker if needed
         actual_ticker = find_ticker(ticker)
         analyzer = StockAnalyzer(actual_ticker)
-        predictions = analyzer.predict_prices(days=days)
+        predictions = analyzer.predict_prices(days=days, model=model_choice)
         
         if not predictions:
             return jsonify({'error': 'Unable to generate predictions'}), 500
@@ -434,7 +493,8 @@ def health_check():
         'status': 'healthy',
         'service': 'Stock Analyzer API',
         'timestamp': datetime.now().isoformat(),
-        'stocksAvailable': list(POPULAR_STOCKS.values())
+        'stocksAvailable': len(set(POPULAR_STOCKS.values())),
+        'modelsAvailable': ['linear', 'lstm'] if TENSORFLOW_AVAILABLE else ['linear']
     })
 
 
@@ -447,17 +507,18 @@ def root():
         'features': [
             'Search by company name or ticker',
             'Real-time stock data',
-            'ML price predictions',
+            'ML price predictions (Linear Regression & LSTM)',
             'Technical analysis (RSI, MACD, MA)',
             'Trading signals'
         ],
         'endpoints': {
-            '/api/stock/<ticker>': 'Get full stock analysis (accepts name or ticker)',
+            '/api/stock/<ticker>?model=linear|lstm': 'Get full stock analysis',
             '/api/search/<query>': 'Search for stocks',
-            '/api/predict/<ticker>/<days>': 'Get price predictions',
+            '/api/predict/<ticker>/<days>?model=linear|lstm': 'Get price predictions',
             '/health': 'Health check'
         },
-        'stocksAvailable': len(set(POPULAR_STOCKS.values()))
+        'stocksAvailable': len(set(POPULAR_STOCKS.values())),
+        'modelsAvailable': ['linear', 'lstm'] if TENSORFLOW_AVAILABLE else ['linear']
     })
 
 
@@ -466,12 +527,13 @@ if __name__ == '__main__':
     debug_mode = os.getenv('FLASK_ENV', 'production') == 'development'
     
     print("=" * 50)
-    print("🚀 Stock Analyzer API Starting...")
+    print("🚀 Stock Analyzer API v2.0 Starting...")
     print("=" * 50)
     print(f"📊 Mode: {'Development' if debug_mode else 'Production'}")
     print(f"🌐 Server: http://localhost:{port}")
-    print(f"💡 Try: http://localhost:{port}/api/stock/AAPL")
+    print(f"💡 Try: http://localhost:{port}/api/stock/AAPL?model=linear")
     print(f"📈 Stocks available: {len(set(POPULAR_STOCKS.values()))}")
+    print(f"🤖 Models: {['Linear', 'LSTM'] if TENSORFLOW_AVAILABLE else ['Linear only']}")
     print("=" * 50)
     
     app.run(host='0.0.0.0', port=port, debug=debug_mode)

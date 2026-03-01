@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, Area, AreaChart } from 'recharts';
-import { TrendingUp, DollarSign, Search, AlertCircle, Activity, Target } from 'lucide-react';
+import { TrendingUp, DollarSign, Search, AlertCircle, Activity, Target, Zap, Brain } from 'lucide-react';
 
 const StockAnalyzer = () => {
   const [ticker, setTicker] = useState('');
@@ -9,6 +9,7 @@ const StockAnalyzer = () => {
   const [error, setError] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [selectedModel, setSelectedModel] = useState('linear');
 
   const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
@@ -23,7 +24,7 @@ const StockAnalyzer = () => {
     setShowSuggestions(false);
 
     try {
-      const response = await fetch(`${API_URL}/stock/${ticker}`);
+      const response = await fetch(`${API_URL}/stock/${ticker}?model=${selectedModel}`);
       
       if (!response.ok) {
         throw new Error('Stock data not found');
@@ -60,7 +61,6 @@ const StockAnalyzer = () => {
   const handleSearchInput = (value) => {
     setTicker(value);
     
-    // Fetch suggestions with debounce
     if (value.length >= 2) {
       setTimeout(() => {
         fetchSuggestions(value);
@@ -76,7 +76,6 @@ const StockAnalyzer = () => {
     setSuggestions([]);
     setShowSuggestions(false);
     
-    // Auto-fetch data after selecting suggestion
     setTimeout(() => {
       const tempTicker = suggestion.ticker;
       setTicker(tempTicker);
@@ -89,7 +88,7 @@ const StockAnalyzer = () => {
     setError('');
 
     try {
-      const response = await fetch(`${API_URL}/stock/${tickerValue}`);
+      const response = await fetch(`${API_URL}/stock/${tickerValue}?model=${selectedModel}`);
       
       if (!response.ok) {
         throw new Error('Stock data not found');
@@ -165,8 +164,8 @@ const StockAnalyzer = () => {
 
         {/* Search Bar */}
         <div className="bg-slate-800 rounded-xl shadow-2xl p-6 mb-6">
-          <div className="flex gap-4">
-            <div className="flex-1 relative">
+          <div className="flex gap-4 flex-wrap">
+            <div className="flex-1 min-w-[300px] relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={20} />
               <input
                 type="text"
@@ -204,12 +203,31 @@ const StockAnalyzer = () => {
                 </div>
               )}
             </div>
+            
+            {/* Model Selector */}
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="px-4 py-3 bg-slate-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              title="Choose prediction model"
+            >
+              <option value="linear">⚡ Fast (~1s)</option>
+              <option value="lstm">🤖 Accurate (~30s)</option>
+            </select>
+            
             <button
               onClick={fetchStockData}
               disabled={loading}
-              className="px-8 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 text-white rounded-lg font-semibold transition-colors"
+              className="px-8 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 text-white rounded-lg font-semibold transition-colors flex items-center gap-2"
             >
-              {loading ? 'Analyzing...' : 'Analyze'}
+              {loading ? (
+                <>
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                  {selectedModel === 'lstm' ? 'Training AI...' : 'Analyzing...'}
+                </>
+              ) : (
+                'Analyze'
+              )}
             </button>
           </div>
           
@@ -219,6 +237,27 @@ const StockAnalyzer = () => {
               <p className="text-red-400">{error}</p>
             </div>
           )}
+          
+          {/* Model Info */}
+          <div className="mt-4 p-3 bg-slate-700/50 rounded-lg">
+            <div className="flex items-start gap-2 text-sm">
+              {selectedModel === 'linear' ? (
+                <>
+                  <Zap className="text-yellow-400 flex-shrink-0 mt-0.5" size={16} />
+                  <div>
+                    <p className="text-slate-300"><strong>Fast Mode:</strong> Uses Linear Regression for quick predictions (~1 second)</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Brain className="text-purple-400 flex-shrink-0 mt-0.5" size={16} />
+                  <div>
+                    <p className="text-slate-300"><strong>Accurate Mode:</strong> Uses LSTM Neural Network for better predictions (~30 seconds)</p>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
           
           {/* Popular Searches */}
           <div className="mt-4">
@@ -243,7 +282,14 @@ const StockAnalyzer = () => {
             {/* Company Name */}
             <div className="bg-slate-800 rounded-xl p-4 shadow-lg">
               <h2 className="text-2xl font-bold text-white">{stockData.current.companyName}</h2>
-              <p className="text-slate-400">{stockData.current.symbol}</p>
+              <div className="flex items-center gap-4 mt-1">
+                <p className="text-slate-400">{stockData.current.symbol}</p>
+                {stockData.predictions && (
+                  <span className="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs rounded border border-blue-500">
+                    {stockData.predictions.model}
+                  </span>
+                )}
+              </div>
               {stockData.searchedFor && stockData.searchedFor !== stockData.actualTicker && (
                 <p className="text-sm text-blue-400 mt-1">
                   Searched for: "{stockData.searchedFor}" → Found: {stockData.actualTicker}
@@ -348,6 +394,7 @@ const StockAnalyzer = () => {
               )}
             </div>
 
+            {/* Rest of the charts remain the same... */}
             {/* Price Chart with Predictions */}
             <div className="bg-slate-800 rounded-xl p-6 shadow-lg">
               <h2 className="text-xl font-bold text-white mb-4">Price History & AI Predictions</h2>
